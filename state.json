@@ -1,6 +1,6 @@
 {
   "last_run": "2026-07-09T00:00:00Z",
-  "mode": "test",
+  "mode": "prod",
   "seen_job_ids": [
     "indeed:JOBSEARCH_1031",
     "indeed:JOBSEARCH_1029",
