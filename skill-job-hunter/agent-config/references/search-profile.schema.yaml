@@ -1,0 +1,53 @@
+# search-profile — schema dato-agnostico
+#
+# Contratto: Google Drive (cartella job-hunting). Un file per utente,
+# es. job-hunting/search-profile.yaml
+# Consumato da: routine job-watch (ricerca Indeed + filtri), job-alert-config (1.2.1)
+# Popolato da: agent-config (1.1)
+#
+# Differenza con master-profile: master-profile descrive CHI è l'utente
+# (esperienza, skill, vincoli). search-profile descrive COSA cercare
+# (ruoli, location, filtri di scarto). Sono derivabili in parte l'uno
+# dall'altro (es. seniority da anni esperienza) ma restano artefatti
+# separati perché uno alimenta il fit-check e l'altro alimenta la query
+# di ricerca.
+
+ruoli_target:
+  - titolo_principale: string
+    sinonimi: [string]              # varianti di titolo da includere nella ricerca
+
+location_target:
+  - area: string                    # es. "Milano/Italia", "Amsterdam/Paesi Bassi"
+    accetta_remoto: boolean
+    accetta_ibrido: boolean
+    priorita: enum[alta, media, bassa]
+
+seniority:
+  livello: enum[junior, medio, senior, lead, non_applicabile]
+  anni_esperienza_min: number
+  anni_esperienza_max: number
+  note: string                      # es. "livello medio, non senior"
+
+esclusioni:
+  titoli_da_escludere: [string]      # es. "Head of", "Director", "VP", "C-level"
+  eccezione_se_ambiguo: boolean      # se true: segnala comunque invece di scartare
+  tipo_contratto_da_escludere: [string]  # es. "Internship", "Traineeship", "Stage"
+
+settori:
+  target: [string]
+  esclusi: [string]
+
+lingue_annuncio:
+  accettate: [string]                # lingue in cui l'annuncio può essere scritto
+  escluse_se_prevalenti: [string]     # lingue che scartano l'annuncio se prevalenti nel corpo
+  escluse_se_obbligatorie: [string]   # lingue che scartano l'annuncio se richieste come requisito, anche se il corpo è in lingua accettata
+  tollerate_se_facoltative: [string]  # lingue ok se indicate come "nice to have"
+
+fonti:
+  - nome: enum[indeed, linkedin_alert, indeed_alert]
+    attiva: boolean
+    note: string                     # es. per LinkedIn: che tipo di alert è configurato
+
+parametri_esecuzione:
+  finestra_temporale_ore: number      # es. 48 — quanto recenti devono essere gli annunci
+  max_annunci_per_esecuzione: number  # es. 15 — cap per garantire completezza dei passi
