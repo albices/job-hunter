@@ -1,8 +1,8 @@
 # job-hunter — contesto permanente per l'agente
 
-Assistente IA per la ricerca di lavoro. Vedi `.docs/` per la storia completa
-delle decisioni di design; qui solo il riepilogo che serve per orientarsi
-in ogni sessione.
+Assistente IA per la ricerca di lavoro. Questo file riassume le decisioni
+chiuse e il funzionamento del sistema per orientarsi in ogni sessione; per
+il dettaglio dei singoli moduli vedi le skill in `.claude/skills/*/SKILL.md`.
 
 ## Requisiti non negoziabili
 1. Onboarding guidato via wizard conversazionale adattivo — niente config manuale.
@@ -52,8 +52,12 @@ Nulla rileva automaticamente un cambio di visibilità, quindi verificalo
 tu. Per cancellare un dato personale da tutta la storia git (non solo
 dall'HEAD), vedi il runbook `docs/runbook-cancellazione-gdpr.md`.
 
-Ancora aperto, deliberatamente: fonti dati (canali legittimi vs scraper terzi)
-— da testare in prototipo, non deciso a tavolino.
+Fonti dati (decisione post-prototipo 2026-07): oltre a Indeed/alert, la routine
+legge le career page delle aziende in searches/companies.yaml con adapter
+A (ATS noto) o B (API JSON scoperta via probe) — vedi
+.docs/analisi/analisi-career-pages-aziende-fusione-cross-fonte_2026-07-12.md.
+Lo scraping HTML/headless (fascia C) resta deliberatamente fuori: le aziende C
+sono tracciate nel digest e candidabili via link diretto, non lette.
 
 ## Skill disponibili
 Otto skill sotto `.claude/skills/`: agent-config, job-search-profile,
@@ -80,41 +84,19 @@ Eccezione dichiarata: `PIPELINE.md` è co-scritto (lo rigenera anche
 integralmente da `applications/`, mai merge manuale; in conflitto vince la
 rigenerazione più recente. Mai fonte di verità.
 Enforcement D5: `.claude/settings.json` (committato) allowlista git, lo script
-del digest, i tool MCP della routine e le scritture sui soli path operativi —
-così la routine gira senza conferme umane. La rete di sicurezza è l'hook
+del digest e le scritture sui soli path operativi; i tool MCP dei connettori
+(Gmail/Indeed) hanno ID legati all'account — dove presenti in allowlist la
+routine li usa senza conferma, in un clone fresco vanno approvati al
+collegamento — così la routine gira senza conferme umane. La rete di sicurezza è l'hook
 `.claude/hooks/protect-files.sh`: nelle sessioni con `JOB_HUNTER_ROUTINE=1`
 (la routine cloud la imposta) blocca ogni scrittura su master-profile,
 searches/, role-fit/, applications/.
 
-## Ridistribuzione — branch `rr_template` (leggi prima di toccarne i pezzi)
-Esiste un branch `rr_template` pubblicabile, privo di qualsiasi dato personale,
-generato da `rr_dev` come **snapshot a radice orfana** (né merge né rebase: la
-storia di `rr_dev` è satura di PII per costruzione). A ogni push su `rr_dev` il
-workflow `.github/workflows/sync-template.yml` ricostruisce lo snapshot su un
-branch `automation/template-sync` e lo pusha; **non apre la PR né pusha su
-`rr_template`** (il token della action non ha i permessi per aprire PR): la PR
-`automation/template-sync -> rr_template` e il merge li fai a mano tu. Meccanismo e regole di estensione in
-`ARCHITETTURA-TEMPLATE.md`; i pezzi vivono in `templating/` +
-`scripts/sync-template.sh`. Regola pratica: se aggiungi una cartella con dati
-personali aggiornala in `templating/exclude-paths.txt` (+ scan-identifiers se
-introduci nuovi identificatori); se aggiungi una skill funzionale, aggiungile la
-guardia di readiness e aggiorna la tabella in `ARCHITETTURA-TEMPLATE.md`. Lo
-scan è fail-closed: un dato personale sfuggito blocca il sync, non lo espone.
-
-## Documenti di riferimento (contesto, non vincoli aggiuntivi)
-`.docs/analisi-esplorativa-job-search-ai_FABLE-01.md` — analisi architetture (fase 1)
-`.docs/lista-revisione-skill-job-hunter.md` — lista di revisione da applicare (fase 4)
-`.docs/revisioni/` — audit di miglioria del sistema (fase 5+)
-Consultali per il "perché" dietro una decisione; questo file resta la fonte
-delle decisioni valide da rispettare.
-
-**Due cartelle documentali, scopi distinti (non consolidarle)**: `.docs/`
-(nascosta) è la storia di design e gli audit interni di *questa* istanza —
-sempre esclusa dal branch `template` (`templating/exclude-paths.txt`), mai
-spedita a un futuro utente. `docs/` (visibile) contiene solo materiale
-generico pensato per essere spedito ai futuri utenti del template (es. i
-runbook operativi come `docs/runbook-cancellazione-gdpr.md`): niente dati
-personali, niente storia di design specifica di questa istanza.
+## Documenti di riferimento
+Questa è la versione distribuibile del sistema: non include la storia di
+design interna né gli strumenti di sincronizzazione del repo sorgente. Le
+fonti valide per orientarti sono questo file, il `README.md`, gli schemi in
+`.claude/skills/*/references/` e i runbook operativi in `docs/`.
 
 ## Anti-drift documentale — README e contratti
 
