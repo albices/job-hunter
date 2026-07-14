@@ -146,14 +146,52 @@ v1 usa i due canali legittimi disponibili oggi (le piattaforme spingono i dati, 
    `noreply@indeed.com`) nella finestra `finestra_temporale_ore`. Alcuni alert
    LinkedIn contengono più annunci per email e senza descrizione: comportamento
    noto, gestito qui.
+   **Attribuzione alert → ricerca (via `searches/alerts-registry.yaml`)**:
+   il subject di un alert LinkedIn porta il titolo del PRIMO annuncio, NON il
+   nome dell'avviso → inutilizzabile per capire da quale ricerca salvata viene
+   la mail. La definizione dell'avviso vive nel CORPO, nel link di ricerca
+   (`/comm/jobs/search...`): estrai `keywords` e `geoId` (scarta SEMPRE i
+   parametri volatili `f_TPR`, `trk`, `lipi`, `midToken`, `eid`) → **chiave
+   canonica `<keywords-slug>:<geoId>`**. Cercala in `alerts-registry.yaml`
+   (voci con lo stesso `keywords`+`geoId`) → ne prendi il `ricerca_id` e
+   l'`intent_id`. **Regola a due rami**: cerca il link nel `plaintextBody`; se
+   non c'è, estrailo dall'HTML — è l'UNICA eccezione ammessa alla regola
+   "solo plaintext", e vale solo per quel link, non per il parsing degli annunci.
+   ⚠️ **Trappola quoted-printable (verificata 2026-07-14)**: il `plaintextBody`
+   del connettore Gmail può fare un doppio-decode QP che **corrompe le prime
+   cifre del `geoId`** (`geoId=103350119` → `geoId\x103350119`, cioè il byte di
+   controllo È le 2 cifre in hex: `=10`→Italia, `=90`→Milano `90009936`,
+   `=91`→UE `91000000`). Perciò: leggi `keywords` dal plaintext (pulito) ma per
+   il `geoId` o decodifica correttamente, **oppure** fai match tollerante per
+   **suffisso** del geoId + keywords contro il registro (che conserva il geoId
+   COMPLETO e pulito). Chiave non trovata → `ricerca_id =
+   <intent>:linkedin_alert:unmatched:<chiave>` e **anomalia nel digest** (alert
+   creato fuori dal sistema o keywords cambiate): non attribuire a forza.
+   Email che NON sono alert (nessun link con `keywords`+`geoId`, es. "lavori
+   simili a X", promozioni) → escludi, non attribuire.
+
    **Strategia di query Gmail**: cerca per mittente + `newer_than:<finestra>`.
    La ricerca Gmail include di default anche la posta ARCHIVIATA, quindi
    l'utente può filtrare/archiviare gli alert per tenere pulita la Inbox senza
    renderli invisibili alla routine. Se `routine-config.yaml` (radice del
    repo, F5) dichiara una **`gmail_label`**, preferisci restringere la query a
-   quella (`label:<id>` — risolvi il nome → ID con `list_labels`), con
-   fallback sui mittenti se il file manca o il campo è vuoto. Non restringere
+   quella con `label:<nome>` — usando il **NOME** dell'etichetta, non l'ID
+   interno. ⚠️ **Trappola verificata (2026-07-14)**: l'operatore Gmail `label:`
+   NON funziona con l'ID interno di `list_labels` (es. `label:Label_744...`
+   restituisce **zero risultati anche se le mail hanno quell'etichetta**) —
+   nonostante la documentazione del tool dica il contrario. Usa il nome così
+   com'è, con gli spazi resi come trattini o l'intero valore tra virgolette:
+   `label:WORK/Job-Hunter` **oppure** `label:"WORK/Job Hunter"` (equivalenti,
+   201 risultati entrambi in test; `label:<id>` → 0). `list_labels` serve solo
+   a verificare che l'etichetta ESISTA, mai a ricavarne un ID per la query.
+   Fallback sui mittenti se il file manca o il campo è vuoto. Non restringere
    mai la query alla sola Inbox (`in:inbox` escluderebbe gli archiviati).
+   **Controllo di sanità obbligatorio**: se una `gmail_label` è dichiarata e la
+   query per etichetta torna 0 risultati, NON dichiarare "etichetta vuota" nel
+   digest senza prima ri-provare col fallback per mittente sulla stessa
+   finestra; se il mittente trova mail che l'etichetta no, la query per
+   etichetta è malformata (questa trappola) — segnala l'anomalia, non uno zero
+   legittimo. Uno zero vero è: mittente E etichetta entrambi a zero.
 3. **Career page aziendali** — per ogni azienda in `searches/companies.yaml`
    con `attiva: true`, `access_tier: A|B` e `robots_ok: si` (STRETTO: `no` e
    `da_verificare` sono equivalenti, entrambi NON interrogati — vedi contratto
@@ -219,7 +257,10 @@ offerte entrano solo via connettore o via email che le piattaforme già spingono
 intento). Leggi `state.json` (gli `annuncio_id` già visti). Leggi
 `routine-config.yaml` (radice del repo, F5) per `gmail_label` — se il file
 manca, procedi col fallback sui mittenti (vedi "Fonti dati"), non è un motivo
-per fermare la run. Determina la finestra temporale (max dei
+per fermare la run. Leggi `searches/alerts-registry.yaml` (se presente) per
+l'attribuzione degli alert email al `ricerca_id`/intento (vedi "Fonti dati",
+punto 2, «Attribuzione alert → ricerca») — se manca, gli alert vanno comunque letti ma attribuiti come
+`unmatched` con nota nel digest, non è un motivo per fermare la run. Determina la finestra temporale (max dei
 `finestra_temporale_ore` degli intenti attivi).
 Fissa il `run_id` della run: è SEMPRE l'istante **UTC reale** di inizio run
 (`date -u` o equivalente), MAI l'orario schedulato né l'ora locale col suffisso
@@ -380,22 +421,45 @@ score ordinale `forte|buono|parziale|debole`, niente numeri). L'output va in
 `staging/`, non in `role-fit/` (regola di proprietà): sarà la promozione umana a
 persisterlo in `role-fit/`. Le offerte oltre il cap: log `non_lavorato_cap`.
 
-### 5-bis. Fusione cross-fonte (entity resolution, solo intra-run)
+### 5-bis. Fusione cross-fonte (entity resolution, intra-run e cross-run)
 Sulle offerte sopravvissute, riconosci quelle che sono la STESSA posizione
-vista da fonti diverse. **Contratto operativo completo** (matrice di decisione,
-soglie `token_set_ratio` 0.90/0.75, lista suffissi societari, suffissi titolo,
-tabella alias location, merge policy) in `references/entity-resolution.md`: gate
-rigido sull'azienda, location compatibile, similarità titolo. **Location assente
-(null) su un lato → mai `merge`** (al più `suspect`, di norma `distinct`):
-l'assenza di dato non è prova di identità — stessa conservatività del gate.
-Esiti: `merge` (un solo record staging con `sources[]` multiplo e merge
-per-campo), `suspect` (record separati + `possible_duplicate_of`), `distinct`.
-La fusione avviene DOPO il source-log (che resta una riga per fonte — è ciò che
-rende misurabile il cross-source overlap nel tuner) e non tocca MAI
-state.json/annuncio_id.
+vista da fonti diverse — sia nella stessa run (es. Indeed e career_page trovano
+la stessa posizione nello stesso giro) sia in run diverse (es. trovata oggi su
+career_page, la stessa azienda la ripropone su LinkedIn tra due giorni: senza
+il confronto cross-run diventerebbe una seconda voce staging duplicata).
+**Contratto operativo completo** (matrice di decisione, soglie
+`token_set_ratio` 0.90/0.75, lista suffissi societari, suffissi titolo, tabella
+alias location, merge policy, ambito intra-run/cross-run) in
+`references/entity-resolution.md`: gate rigido sull'azienda, location
+compatibile, similarità titolo. **Location assente (null) su un lato → mai
+`merge`** (al più `suspect`, di norma `distinct`): l'assenza di dato non è
+prova di identità — stessa conservatività del gate.
+
+- **Intra-run**: confronto tra le offerte sopravvissute di questa run.
+- **Cross-run**: confronto di ogni offerta sopravvissuta anche contro il
+  `position_id` (+ azienda/titolo/location) delle voci `staging/*/staging.yaml`
+  con `status: pending` di run precedenti, e delle voci
+  `applications/*/application.yaml` (qualunque stato) — stesso algoritmo,
+  stesse soglie.
+
+Esiti: `merge` contro una `pending` esistente → **quella voce riceve la fonte
+nuova** in append a `sources[]` (mai una seconda cartella staging per la stessa
+posizione), con merge per-campo riapplicato; `merge` contro una voce già in
+`applications/` → **non si crea nulla in staging**, si segnala nel digest
+(sezione anomalie) che una posizione già candidata è ricomparsa su una fonte
+nuova, con link alla candidatura; `suspect` (in entrambi gli ambiti) → record
+separato con `possible_duplicate_of` valorizzato, per la revisione umana;
+`distinct` → nessuna annotazione. La fusione avviene DOPO il source-log (che
+resta una riga per fonte — è ciò che rende misurabile il cross-source overlap
+nel tuner) e non tocca MAI state.json/annuncio_id, in nessuno dei due ambiti.
 
 ### 6. Gate + pre-generazione materiali
-Per ogni offerta valutata crea/aggiorna `staging/<id>/` col contratto in
+Per ogni offerta valutata: se il passo 5-bis l'ha fusa **cross-run** con una
+voce `pending` esistente, aggiorna quella voce (`sources[]` + merge per-campo,
+ricalcola `primary_source`/`preferred_apply_channel` se la fonte vincente
+cambia) invece di creare una cartella nuova; se fusa cross-run con una voce già
+in `applications/`, non creare nulla (vedi 5-bis, la si segnala solo nel
+digest). Altrimenti crea/aggiorna `staging/<id>/` col contratto in
 `references/staging-schema.md` (`staging.yaml` + `fit.yaml`). **Gate**: solo per
 i fit `forte` e `buono` **che non siano palesemente sotto il floor RAL**
 dell'aspettativa (rifinitura) pre-genera i materiali (CV + cover + DM) riusando
